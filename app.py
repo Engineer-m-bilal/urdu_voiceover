@@ -1,161 +1,114 @@
 import io
 import os
-import tempfile
+from pathlib import Path
 from datetime import datetime
-
-import numpy as np
-import soundfile as sf
 import streamlit as st
-from TTS.api import TTS
+from openai import OpenAI
 
-st.set_page_config(page_title="Urdu Voice Cloner (XTTS v2)", page_icon="🗣️", layout="centered")
+st.set_page_config(page_title="Urdu TTS - OpenAI", page_icon="🔊", layout="centered")
 
-st.title("🗣️ Urdu Text → Your Voice (Voice Cloning)")
-st.caption("Upload a short sample of your voice, type Urdu text, and get audio in your voice (XTTS v2, CPU friendly).")
+st.title("🔊 Urdu Text → Speech (OpenAI)")
+st.caption("Type Urdu text and generate natural Urdu speech with OpenAI TTS. If you have a custom OpenAI voice ID, you can use it.")
 
-# ----------------------------
-# Cache the model so it loads once
-# ----------------------------
-@st.cache_resource(show_spinner=True)
-def load_tts():
-    # Multilingual zero-shot cloning, supports Urdu with language='ur'
-    return TTS(model_name="tts_models/multilingual/multi-dataset/xtts_v2")
+# ---- API key ----
+API_KEY = os.getenv("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") or st.secrets.get("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")
+if not API_KEY:
+    st.error("Missing OPENAI_API_KEY. In your Space go to Settings → Secrets and add it.")
+    st.stop()
 
-tts = load_tts()
+client = OpenAI(api_key=API_KEY)
 
-# ----------------------------
-# Sidebar options
-# ----------------------------
+# ---- Sidebar options ----
 with st.sidebar:
     st.header("Options")
-    st.caption("Upload a clean 10–30s clip, no background noise if possible.")
-    similarity_boost = st.slider("Similarity boost", 0.0, 1.0, 0.75, 0.05)
-    stability = st.slider("Stability", 0.0, 1.0, 0.60, 0.05)
-    style = st.slider("Style (expressiveness)", 0.0, 1.0, 0.35, 0.05)
-    normalize = st.checkbox("Normalize loudness", True)
-    base_name = st.text_input("Output filename (no extension)", "urdu_voice_clone")
-    seed = st.number_input("Random seed", value=42, step=1)
+    st.caption("Pick a built-in voice or provide your own custom voice ID if you have access.")
+    voice_presets = ["alloy", "verse", "aria", "ballad", "cove", "luna", "sage"]
+    use_custom = st.checkbox("Use custom OpenAI voice ID", False)
+    custom_voice = ""
+    if use_custom:
+        custom_voice = st.text_input("Custom voice_id", value="", help="Requires Voice access in your OpenAI account")
+    else:
+        preset = st.selectbox("Built-in voice", options=voice_presets, index=0)
+    out_name = st.text_input("Output filename (no extension)", "urdu_tts")
+    fmt = st.selectbox("Audio format", options=["mp3_44100_128", "wav"], index=0)
 
-# ----------------------------
-# Simple helpers (no librosa)
-# ----------------------------
-def simple_trim_silence(wave: np.ndarray, threshold: float = 1e-4, pad: int = 0) -> np.ndarray:
-    """
-    Very simple silence trim: finds where absolute amplitude exceeds threshold.
-    If nothing exceeds threshold, returns original.
-    """
-    if wave.ndim > 1:
-        wave = wave.mean(axis=1)
-    idx = np.where(np.abs(wave) > threshold)[0]
-    if idx.size == 0:
-        return wave
-    start = max(int(idx[0]) - pad, 0)
-    end = min(int(idx[-1]) + pad, wave.shape[0])
-    return wave[start:end]
-
-def normalize_peak(wave: np.ndarray, peak: float = 0.98) -> np.ndarray:
-    m = np.max(np.abs(wave)) + 1e-9
-    return (peak * wave / m).astype(np.float32)
-
-def wav_bytes_from_array(y: np.ndarray, sr: int) -> bytes:
-    buf = io.BytesIO()
-    sf.write(buf, y, sr, format="WAV")
-    buf.seek(0)
-    return buf.read()
-
-# ----------------------------
-# Inputs
-# ----------------------------
-ref_file = st.file_uploader("Upload your voice sample (wav/mp3/m4a/ogg/flac)", type=["wav", "mp3", "m4a", "ogg", "flac"])
-default_text = "یہ میری آواز کی مثال ہے۔ آپ یہاں اپنا متن لکھیں اور آڈیو حاصل کریں۔"
-text = st.text_area("Urdu text", value=default_text, height=180, placeholder="یہاں اردو میں ٹیکسٹ لکھیں یا پیسٹ کریں…")
+sample = "یہ ایک سادہ مثال ہے۔ یہاں اپنا متن لکھیں اور آڈیو حاصل کریں۔"
+text = st.text_area("Urdu text", value=sample, height=200, placeholder="یہاں اردو میں ٹیکسٹ لکھیں یا پیسٹ کریں…")
 
 col1, col2 = st.columns(2)
 with col1:
-    run_btn = st.button("🎙️ Generate", use_container_width=True)
+    make_audio = st.button("🎙️ Generate", use_container_width=True)
 with col2:
-    clear_btn = st.button("🧹 Clear", use_container_width=True)
+    clear = st.button("🧹 Clear", use_container_width=True)
 
-if clear_btn:
+if clear:
     st.session_state.pop("audio_bytes", None)
     st.experimental_rerun()
 
-# ----------------------------
-# Run synthesis
-# ----------------------------
-if run_btn:
+def tts_openai(urdu_text: str, voice: str, output_format: str) -> bytes:
+    """
+    Uses OpenAI TTS (gpt-4o-mini-tts) to synthesize speech.
+    We write to a temp file using streaming response, then return bytes.
+    """
+    model = "gpt-4o-mini-tts"
+    # Map friendly dropdown to OpenAI format
+    # mp3_44100_128 is recommended for quality-size balance
+    if output_format == "wav":
+        audio_format = "wav"
+        ext = "wav"
+    else:
+        audio_format = "mp3"
+        ext = "mp3"
+
+    tmp_path = Path(f"/tmp/tts_{datetime.now().strftime('%H%M%S')}.{ext}")
+    with client.audio.speech.with_streaming_response.create(
+        model=model,
+        voice=voice,
+        input=urdu_text,
+        format=audio_format
+    ) as resp:
+        resp.stream_to_file(tmp_path)
+
+    data = tmp_path.read_bytes()
+    try:
+        tmp_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+    return data, ext
+
+if make_audio:
     if not text.strip():
-        st.warning("براہ کرم اردو متن درج کریں۔")
-    elif ref_file is None:
-        st.warning("براہ کرم اپنی آواز کی آڈیو فائل اپلوڈ کریں۔")
+        st.warning("براہ کرم اردو متن درج کریں")
     else:
         try:
-            # Save uploaded file to a temp path (XTTS can accept various formats via soundfile/ffmpeg backend)
-            tmp_ref = tempfile.NamedTemporaryFile(delete=False, suffix=f".{ref_file.name.split('.')[-1]}")
-            tmp_ref.write(ref_file.read())
-            tmp_ref.flush()
-            tmp_ref.close()
-
-            # Optional: quick silence trim to reduce leading/trailing gaps
-            try:
-                y_ref, sr_ref = sf.read(tmp_ref.name, dtype="float32", always_2d=False)
-                y_ref = simple_trim_silence(y_ref)
-                sf.write(tmp_ref.name, y_ref, sr_ref)  # overwrite trimmed
-            except Exception:
-                # If reading/trim fails, keep original file
-                pass
-
-            st.info("Cloning voice and synthesizing Urdu… (CPU can take a bit on first run)")
-
-            out_wav_path = tempfile.NamedTemporaryFile(delete=False, suffix=".wav").name
-
-            # Generate audio
-            tts.tts_to_file(
-                text=text.strip(),
-                file_path=out_wav_path,
-                speaker_wav=tmp_ref.name,
-                language="ur",
-                # Common conditioning knobs
-                speaker_similarity=float(similarity_boost),
-                stability=float(stability),
-                style=float(style),
-                split_sentences=True,
-                seed=int(seed),
-            )
-
-            # Load, optional normalize, then serve
-            y, sr = sf.read(out_wav_path, dtype="float32", always_2d=False)
-            if normalize:
-                y = normalize_peak(y)
-
-            audio_bytes = wav_bytes_from_array(y, sr)
-            st.session_state["audio_bytes"] = audio_bytes
-
-            # Cleanup temp files
-            try:
-                os.remove(tmp_ref.name)
-                os.remove(out_wav_path)
-            except Exception:
-                pass
-
-            st.success("آڈیو تیار ہے۔")
-
+            voice_to_use = custom_voice.strip() if use_custom and custom_voice.strip() else (preset if not use_custom else None)
+            if not voice_to_use:
+                st.warning("Custom voice ID is empty. Either uncheck custom voice or provide a valid voice_id.")
+            else:
+                st.info("Generating speech with OpenAI TTS…")
+                audio_bytes, ext = tts_openai(text.strip(), voice_to_use, fmt)
+                st.session_state["audio_bytes"] = audio_bytes
+                st.session_state["ext"] = ext
+                st.success("آڈیو تیار ہے")
         except Exception as e:
             st.error(f"کچھ مسئلہ آیا: {e}")
 
-# ----------------------------
-# Preview & download
-# ----------------------------
+# ---- Preview and download ----
 if "audio_bytes" in st.session_state:
+    ext = st.session_state.get("ext", "mp3")
     st.markdown("### ▶️ Preview")
-    st.audio(st.session_state["audio_bytes"], format="audio/wav")
-
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    fname = f"{(base_name or 'urdu_voice_clone').strip()}_{ts}.wav"
-    st.download_button("⬇️ Download WAV", data=st.session_state["audio_bytes"], file_name=fname, mime="audio/wav", use_container_width=True)
+    st.audio(st.session_state["audio_bytes"], format=f"audio/{'mpeg' if ext=='mp3' else 'wav'}")
+    fname = f"{(out_name or 'urdu_tts').strip()}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{ext}"
+    st.download_button(
+        "⬇️ Download",
+        data=st.session_state["audio_bytes"],
+        file_name=fname,
+        mime="audio/mpeg" if ext == "mp3" else "audio/wav",
+        use_container_width=True
+    )
 
 st.markdown("---")
 st.caption(
-    "Tips: Use a clear 10–30 second reference with low noise. If cloning feels off, try a different sample, "
-    "raise Similarity slightly, or lower Stability a little."
+    "Notes: Built-in voices are not your personal voice. For an exact match you need OpenAI Voice access with a custom voice_id. "
+    "Urdu is supported by gpt-4o-mini-tts. If the audio sounds too fast or slow, try the WAV format then adjust speed in an editor."
 )
