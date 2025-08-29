@@ -1,7 +1,6 @@
 streamlit>=1.32
-TTS>=0.22.0
-torch
-torchaudio
+TTS==0.22.0
+torch==2.2.2
+torchaudio==2.2.2
 soundfile
-librosa
 numpy
