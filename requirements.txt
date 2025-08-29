@@ -1,6 +1,2 @@
 streamlit>=1.32
-TTS==0.22.0
-torch==2.2.2
-torchaudio==2.2.2
-soundfile
-numpy
+openai>=1.35.0
