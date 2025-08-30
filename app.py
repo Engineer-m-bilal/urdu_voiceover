@@ -8,12 +8,12 @@ from openai import OpenAI
 st.set_page_config(page_title="Urdu TTS - OpenAI", page_icon="🔊", layout="centered")
 
 st.title("🔊 Urdu Text → Speech (OpenAI)")
-st.caption("Type Urdu text and generate natural Urdu speech with OpenAI TTS. If you have a custom OpenAI voice ID, you can use it.")
+st.caption("Type Urdu text and generate natural Urdu speech with OpenAI TTS. If you have a custom voice ID, you can use it.")
 
-# ---- API key ----
-API_KEY = os.getenv("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") or st.secrets.get("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")
+# ---- API key from Hugging Face Secret ----
+API_KEY = os.getenv("Key_1") or st.secrets.get("Key_1")
 if not API_KEY:
-    st.error("Missing OPENAI_API_KEY. In your Space go to Settings → Secrets and add it.")
+    st.error("Missing Key_1. Go to Settings → Secrets in your Space and add it.")
     st.stop()
 
 client = OpenAI(api_key=API_KEY)
@@ -21,45 +21,34 @@ client = OpenAI(api_key=API_KEY)
 # ---- Sidebar options ----
 with st.sidebar:
     st.header("Options")
-    st.caption("Pick a built-in voice or provide your own custom voice ID if you have access.")
-    voice_presets = ["alloy", "verse", "aria", "ballad", "cove", "luna", "sage"]
+    voices = ["alloy", "verse", "aria", "ballad", "cove", "luna", "sage"]
     use_custom = st.checkbox("Use custom OpenAI voice ID", False)
     custom_voice = ""
     if use_custom:
-        custom_voice = st.text_input("Custom voice_id", value="", help="Requires Voice access in your OpenAI account")
+        custom_voice = st.text_input("Custom voice_id", value="", help="Only works if your account has custom voices enabled")
     else:
-        preset = st.selectbox("Built-in voice", options=voice_presets, index=0)
+        preset = st.selectbox("Built-in voice", options=voices, index=0)
     out_name = st.text_input("Output filename (no extension)", "urdu_tts")
-    fmt = st.selectbox("Audio format", options=["mp3_44100_128", "wav"], index=0)
+    fmt = st.selectbox("Audio format", options=["mp3", "wav"], index=0)
 
-sample = "یہ ایک سادہ مثال ہے۔ یہاں اپنا متن لکھیں اور آڈیو حاصل کریں۔"
-text = st.text_area("Urdu text", value=sample, height=200, placeholder="یہاں اردو میں ٹیکسٹ لکھیں یا پیسٹ کریں…")
+# ---- Main input ----
+default_text = "یہ ایک سادہ مثال ہے۔ یہاں اپنا متن لکھیں اور آڈیو حاصل کریں۔"
+text = st.text_area("Urdu text", value=default_text, height=200, placeholder="یہاں اردو میں ٹیکسٹ لکھیں یا پیسٹ کریں…")
 
 col1, col2 = st.columns(2)
 with col1:
-    make_audio = st.button("🎙️ Generate", use_container_width=True)
+    run_btn = st.button("🎙️ Generate", use_container_width=True)
 with col2:
-    clear = st.button("🧹 Clear", use_container_width=True)
+    clear_btn = st.button("🧹 Clear", use_container_width=True)
 
-if clear:
+if clear_btn:
     st.session_state.pop("audio_bytes", None)
     st.experimental_rerun()
 
-def tts_openai(urdu_text: str, voice: str, output_format: str) -> bytes:
-    """
-    Uses OpenAI TTS (gpt-4o-mini-tts) to synthesize speech.
-    We write to a temp file using streaming response, then return bytes.
-    """
+# ---- Helper function ----
+def tts_openai(urdu_text: str, voice: str, audio_format: str) -> bytes:
     model = "gpt-4o-mini-tts"
-    # Map friendly dropdown to OpenAI format
-    # mp3_44100_128 is recommended for quality-size balance
-    if output_format == "wav":
-        audio_format = "wav"
-        ext = "wav"
-    else:
-        audio_format = "mp3"
-        ext = "mp3"
-
+    ext = "mp3" if audio_format == "mp3" else "wav"
     tmp_path = Path(f"/tmp/tts_{datetime.now().strftime('%H%M%S')}.{ext}")
     with client.audio.speech.with_streaming_response.create(
         model=model,
@@ -68,7 +57,6 @@ def tts_openai(urdu_text: str, voice: str, output_format: str) -> bytes:
         format=audio_format
     ) as resp:
         resp.stream_to_file(tmp_path)
-
     data = tmp_path.read_bytes()
     try:
         tmp_path.unlink(missing_ok=True)
@@ -76,7 +64,8 @@ def tts_openai(urdu_text: str, voice: str, output_format: str) -> bytes:
         pass
     return data, ext
 
-if make_audio:
+# ---- Generate speech ----
+if run_btn:
     if not text.strip():
         st.warning("براہ کرم اردو متن درج کریں")
     else:
@@ -85,7 +74,7 @@ if make_audio:
             if not voice_to_use:
                 st.warning("Custom voice ID is empty. Either uncheck custom voice or provide a valid voice_id.")
             else:
-                st.info("Generating speech with OpenAI TTS…")
+                st.info("Generating Urdu speech with OpenAI TTS…")
                 audio_bytes, ext = tts_openai(text.strip(), voice_to_use, fmt)
                 st.session_state["audio_bytes"] = audio_bytes
                 st.session_state["ext"] = ext
@@ -93,7 +82,7 @@ if make_audio:
         except Exception as e:
             st.error(f"کچھ مسئلہ آیا: {e}")
 
-# ---- Preview and download ----
+# ---- Preview & download ----
 if "audio_bytes" in st.session_state:
     ext = st.session_state.get("ext", "mp3")
     st.markdown("### ▶️ Preview")
@@ -109,6 +98,6 @@ if "audio_bytes" in st.session_state:
 
 st.markdown("---")
 st.caption(
-    "Notes: Built-in voices are not your personal voice. For an exact match you need OpenAI Voice access with a custom voice_id. "
-    "Urdu is supported by gpt-4o-mini-tts. If the audio sounds too fast or slow, try the WAV format then adjust speed in an editor."
+    "Notes: Built-in voices are not your personal voice. For your own cloned voice, you need access to custom OpenAI Voice IDs. "
+    "Urdu is supported by gpt-4o-mini-tts."
 )
